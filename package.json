@@ -1,0 +1,93 @@
+{
+  "name": "chinese-to-gt-converter",
+  "displayName": "Chinese to gt() Converter",
+  "description": "将代码中的中文转换为 gt('') 函数包裹的形式",
+  "version": "1.0.2",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Formatters",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:chineseToGt.convertFile",
+    "onCommand:chineseToGt.convertSelection",
+    "onCommand:chineseToGt.convertFolder"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "chineseToGt.convertFile",
+        "title": "转化中文为 => gt('中文')",
+        "category": "Chinese to gt()"
+      },
+      {
+        "command": "chineseToGt.convertSelection",
+        "title": "转化选中部分的中文为 => gt('中文')",
+        "category": "Chinese to gt()"
+      },
+      {
+        "command": "chineseToGt.convertFolder",
+        "title": "转化文件夹中的所有中文为 gt('中文')",
+        "category": "Chinese to gt()"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "chineseToGt.convertSelection",
+          "when": "editorHasSelection",
+          "group": "1_modification"
+        },
+        {
+          "command": "chineseToGt.convertFile",
+          "group": "1_modification"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "chineseToGt.convertFile",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "chineseToGt.convertFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "1_modification"
+        },
+        {
+          "command": "chineseToGt.convertFolder",
+          "when": "explorerResourceIsFile",
+          "group": "1_modification"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "chineseToGt.convertSelection",
+        "key": "ctrl+shift+g",
+        "mac": "cmd+shift+g",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "chineseToGt.convertFile",
+        "key": "ctrl+alt+g",
+        "mac": "cmd+alt+g"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^16.x",
+    "@types/vscode": "^1.60.0",
+    "typescript": "^4.9.0"
+  }
+}
+
