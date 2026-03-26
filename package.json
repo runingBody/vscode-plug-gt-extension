@@ -1,8 +1,8 @@
 {
   "name": "qk-chinese-to-gt-converter",
-  "displayName": "Chinese to gt() Converter",
+  "displayName": "qk-chinese-to-gt-converter",
   "description": "将代码中的中文转换为 gt('') 函数包裹的形式",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "publisher": "liurun",
   "icon": "resources/thunder.png",
   "engines": {

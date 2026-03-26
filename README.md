@@ -11,6 +11,7 @@
 - 减少误转换，例如条件比较值、模块路径、对象 key、类型字面量等
 - 转换成功后自动生成模块级 `_i18n/en.ts`
 - 自动尝试把模块 i18n 注入到全局 `src/i18n/namespace/global/en.ts`
+- 体验更高阶的自翻译能力，需要安装VSCode Samge Translate插件，并配置 appId和appSecret. （阿里或者百度等都有免费额度 5-10万字符/一月，足够使用了）
 
 ## 适用文件
 
@@ -226,31 +227,6 @@ if (status === "已完成") {
 - 某些非展示文案被误转换
 - 转换后词条文件需要手工新建和手工接入全局的问题
 
-## 安装与开发
-
-### 安装依赖
-
-```bash
-npm install
-```
-
-### 编译
-
-```bash
-npm run compile
-```
-
-### 测试
-
-```bash
-npm test
-```
-
-### 调试插件
-
-1. 用 VSCode 打开项目
-2. 按 `F5`
-3. 在新开的 Extension Development Host 中测试命令
 
 ## 注意事项
 

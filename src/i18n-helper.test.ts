@@ -14,9 +14,10 @@ const globalTranslationMemory = parseTranslationMemory(
 
 const merged = mergeModuleTranslationContent(undefined, ['资源名称', '处理中'], translationMemory);
 assert.equal(
-	merged,
+	merged.content,
 	'const en = {\n\t"处理中": "Processing",\n\t"资源名称": "ResourceName",\n};\n\nexport default en;\n'
 );
+assert.deepEqual(merged.unresolvedMessages, []);
 
 const mergedExisting = mergeModuleTranslationContent(
 	'const en = {\n\t"资源名称": "Resource Name",\n};\n\nexport default en;\n',
@@ -24,9 +25,10 @@ const mergedExisting = mergeModuleTranslationContent(
 	translationMemory
 );
 assert.equal(
-	mergedExisting,
+	mergedExisting.content,
 	'const en = {\n\t"处理中": "Processing",\n\t"资源名称": "Resource Name",\n};\n\nexport default en;\n'
 );
+assert.deepEqual(mergedExisting.unresolvedMessages, []);
 
 const mergedSample = mergeModuleTranslationContent(
 	undefined,
@@ -34,9 +36,10 @@ const mergedSample = mergeModuleTranslationContent(
 	globalTranslationMemory
 );
 assert.equal(
-	mergedSample,
+	mergedSample.content,
 	'const en = {\n\t"操作": "Action",\n\t"订单编号": "OrderNumber",\n\t"订单日期": "OrderDate",\n\t"返": "Return",\n\t"供应商名称/代码": "SupplierNameOrCode",\n\t"寄": "Send",\n\t"寄出单号": "OutboundTrackingNumber",\n\t"寄回单号": "ReturnTrackingNumber",\n\t"来源": "Source",\n\t"往来单号": "TransactionNumber",\n\t"业务方": "Purchaser",\n\t"原因: ": "Reason",\n\t"质保函状态": "WarrantyLetterStatus",\n};\n\nexport default en;\n'
 );
+assert.deepEqual(mergedSample.unresolvedMessages, []);
 
 const mergedGlobalDriven = mergeModuleTranslationContent(
 	'const en = {\n\t"搜索": "Search",\n};\n\nexport default en;\n',
@@ -44,9 +47,10 @@ const mergedGlobalDriven = mergeModuleTranslationContent(
 	globalTranslationMemory
 );
 assert.equal(
-	mergedGlobalDriven,
+	mergedGlobalDriven.content,
 	'const en = {\n\t"查询条件不能为空": "TheQueryConditionCannotBeEmpty",\n\t"导出中": "Exporting",\n\t"请输入名称或代码": "PleaseEnterANameOrCode",\n\t"筛选": "Filter",\n\t"搜索": "Search",\n\t"只能导出状态为待寄出的记录": "OnlyRecordsWithAStatusOfPendingShipmentCanBeExported",\n\t"质保函列表": "ListOfQualityAssuranceLetters",\n};\n\nexport default en;\n'
 );
+assert.deepEqual(mergedGlobalDriven.unresolvedMessages, []);
 
 const mergedUnknown = mergeModuleTranslationContent(
 	undefined,
@@ -54,9 +58,10 @@ const mergedUnknown = mergeModuleTranslationContent(
 	new Map()
 );
 assert.equal(
-	mergedUnknown,
+	mergedUnknown.content,
 	'const en = {\n\t"完全未知业务词": "",\n};\n\nexport default en;\n'
 );
+assert.deepEqual(mergedUnknown.unresolvedMessages, ['完全未知业务词']);
 
 assert.equal(
 	buildImportName('/workspace/src/pages/demo/module-a', '/workspace'),
@@ -88,7 +93,17 @@ const globalUpdated = upsertGlobalNamespaceContent(
 );
 assert.equal(
 	globalUpdated,
-	"import src_pages_demo_module_a_en from '../../../pages/demo/module-a/_i18n/en';\nconst en = {\n\tbase: 'base',\n\t...src_pages_demo_module_a_en,\n};\n\nexport default en;\n"
+	"import src_pages_demo_module_a_en from '../../../pages/demo/module-a/_i18n/en';\nconst en = {\n\t...src_pages_demo_module_a_en,\n\tbase: 'base',\n};\n\nexport default en;\n"
+);
+
+const globalUpdatedWithImports = upsertGlobalNamespaceContent(
+	"import { addPrefixToKeys } from '../util';\nimport base from './base';\n\nconst zh = {\n\tbase,\n};\n\nexport default zh;\n",
+	'src_pages_demo_module_a_en',
+	'../../../pages/demo/module-a/_i18n/en'
+);
+assert.equal(
+	globalUpdatedWithImports,
+	"import src_pages_demo_module_a_en from '../../../pages/demo/module-a/_i18n/en';\nimport { addPrefixToKeys } from '../util';\nimport base from './base';\n\nconst zh = {\n\t...src_pages_demo_module_a_en,\n\tbase,\n};\n\nexport default zh;\n"
 );
 
 console.log('i18n helper tests passed');

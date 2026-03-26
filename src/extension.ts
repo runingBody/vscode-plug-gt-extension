@@ -13,7 +13,21 @@ import {
 type I18nSyncResult = {
 	moduleFilesUpdated: number;
 	globalFilesUpdated: number;
+	unresolvedMessages: string[];
+	samgeTranslateAttempted: boolean;
+	samgeTranslateSkippedForMissingConfig: boolean;
 	warnings: string[];
+};
+
+type SamgeTranslateConfig = {
+	providerName: string;
+	providerAppId: string;
+	providerAppSecret: string;
+};
+
+type SamgeCommandReadResult = {
+	value?: string;
+	fatalError?: boolean;
 };
 
 const INDEX_FILE_NAMES = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
@@ -35,6 +49,8 @@ const MODULE_CHILD_DIR_NAMES = new Set([
 	'stores',
 	'config'
 ]);
+
+let hasShownSamgeConfigPrompt = false;
 
 export function activate(context: vscode.ExtensionContext) {
 	console.log('Chinese to gt() converter is now active!');
@@ -67,8 +83,9 @@ export function activate(context: vscode.ExtensionContext) {
 				editBuilder.replace(fullRange, convertedText);
 			});
 
-			const syncResult = syncDocumentI18n(document.uri, report.messages, document.uri.fsPath);
-			showSingleFileResult('File converted successfully!', syncResult);
+			const syncResult = await syncDocumentI18n(document.uri, report.messages, document.uri.fsPath);
+			await maybeHandleSamgeTranslateAssistance(syncResult);
+			showSingleFileResult('执行成功！', syncResult);
 		}
 	);
 
@@ -102,8 +119,9 @@ export function activate(context: vscode.ExtensionContext) {
 				editBuilder.replace(selection, convertedText);
 			});
 
-			const syncResult = syncDocumentI18n(document.uri, report.messages, document.uri.fsPath);
-			showSingleFileResult('Selection converted successfully!', syncResult);
+			const syncResult = await syncDocumentI18n(document.uri, report.messages, document.uri.fsPath);
+			await maybeHandleSamgeTranslateAssistance(syncResult);
+			showSingleFileResult('执行成功！', syncResult);
 		}
 	);
 
@@ -228,9 +246,10 @@ export function activate(context: vscode.ExtensionContext) {
 							}
 						}
 
-						const syncResult = syncModuleMessageMap(moduleMessages, workspaceRoot);
+							const syncResult = await syncModuleMessageMap(moduleMessages, workspaceRoot);
+							await maybeHandleSamgeTranslateAssistance(syncResult);
 
-						// 显示完成消息
+							// 显示完成消息
 						if (errorCount === 0) {
 							vscode.window.showInformationMessage(
 								buildFolderSuccessMessage(convertedCount, syncResult)
@@ -372,12 +391,15 @@ function resolveGlobalNamespaceFile(workspaceRoot: string): string | undefined {
 	return undefined;
 }
 
-function syncDocumentI18n(uri: vscode.Uri, messages: string[], targetPath: string): I18nSyncResult {
+async function syncDocumentI18n(uri: vscode.Uri, messages: string[], targetPath: string): Promise<I18nSyncResult> {
 	const workspaceRoot = findWorkspaceRootFromUri(uri);
 	if (!workspaceRoot || uri.scheme !== 'file') {
 		return {
 			moduleFilesUpdated: 0,
 			globalFilesUpdated: 0,
+			unresolvedMessages: [],
+			samgeTranslateAttempted: false,
+			samgeTranslateSkippedForMissingConfig: false,
 			warnings: messages.length > 0 ? ['当前文件不在本地工作区，已跳过 i18n 文件生成。'] : []
 		};
 	}
@@ -385,19 +407,29 @@ function syncDocumentI18n(uri: vscode.Uri, messages: string[], targetPath: strin
 	const moduleDir = resolveModuleRoot(targetPath, workspaceRoot);
 	const messageMap = new Map<string, Set<string>>();
 	messageMap.set(moduleDir, new Set(messages));
-	return syncModuleMessageMap(messageMap, workspaceRoot);
+	return await syncModuleMessageMap(messageMap, workspaceRoot);
 }
 
-function syncModuleMessageMap(
+async function syncModuleMessageMap(
 	moduleMessages: Map<string, Set<string>>,
 	workspaceRoot: string | undefined
-): I18nSyncResult {
+): Promise<I18nSyncResult> {
 	if (!workspaceRoot || moduleMessages.size === 0) {
-		return { moduleFilesUpdated: 0, globalFilesUpdated: 0, warnings: [] };
+		return {
+			moduleFilesUpdated: 0,
+			globalFilesUpdated: 0,
+			unresolvedMessages: [],
+			samgeTranslateAttempted: false,
+			samgeTranslateSkippedForMissingConfig: false,
+			warnings: []
+		};
 	}
 
 	let moduleFilesUpdated = 0;
 	let globalFilesUpdated = 0;
+	const unresolvedMessages = new Set<string>();
+	let samgeTranslateAttempted = false;
+	let samgeTranslateSkippedForMissingConfig = false;
 	const warnings: string[] = [];
 	const globalNamespaceFile = resolveGlobalNamespaceFile(workspaceRoot);
 	const translationMemory = parseTranslationMemory(
@@ -417,11 +449,36 @@ function syncModuleMessageMap(
 		const existingModuleContent = fs.existsSync(moduleEnFile)
 			? fs.readFileSync(moduleEnFile, 'utf-8')
 			: undefined;
-		const nextModuleContent = mergeModuleTranslationContent(
+		let mergeResult = mergeModuleTranslationContent(
 			existingModuleContent,
 			messages,
 			translationMemory
 		);
+
+		if (mergeResult.unresolvedMessages.length > 0) {
+			const samgeResult = await tryTranslateMessagesWithSamge(mergeResult.unresolvedMessages);
+			samgeTranslateAttempted = samgeTranslateAttempted || samgeResult.attempted;
+			samgeTranslateSkippedForMissingConfig =
+				samgeTranslateSkippedForMissingConfig || samgeResult.skippedForMissingConfig;
+
+			if (samgeResult.translations.size > 0) {
+				const mergedTranslationMemory = new Map(translationMemory);
+				for (const [message, translatedValue] of samgeResult.translations) {
+					mergedTranslationMemory.set(message, translatedValue);
+				}
+
+				mergeResult = mergeModuleTranslationContent(
+					existingModuleContent,
+					messages,
+					mergedTranslationMemory
+				);
+			}
+		}
+
+		const nextModuleContent = mergeResult.content;
+		for (const unresolvedMessage of mergeResult.unresolvedMessages) {
+			unresolvedMessages.add(unresolvedMessage);
+		}
 
 		fs.mkdirSync(moduleI18nDir, { recursive: true });
 		if (existingModuleContent !== nextModuleContent) {
@@ -458,24 +515,266 @@ function syncModuleMessageMap(
 	return {
 		moduleFilesUpdated,
 		globalFilesUpdated,
+		unresolvedMessages: Array.from(unresolvedMessages),
+		samgeTranslateAttempted,
+		samgeTranslateSkippedForMissingConfig,
 		warnings
 	};
 }
 
+function getSamgeTranslateExtension(): vscode.Extension<any> | undefined {
+	return vscode.extensions.getExtension('samge.vscode-samge-translate');
+}
+
+function getSamgeTranslateConfig(): SamgeTranslateConfig {
+	const config = vscode.workspace.getConfiguration();
+
+	return {
+		providerName: config.get<string>('samge.translate.providerName')?.trim().toLowerCase() ?? 'baidu',
+		providerAppId: config.get<string>('samge.translate.providerAppId')?.trim() ?? '',
+		providerAppSecret: config.get<string>('samge.translate.providerAppSecret')?.trim() ?? ''
+	};
+}
+
+function hasSamgeTranslateCredentials(): boolean {
+	const { providerName, providerAppId, providerAppSecret } = getSamgeTranslateConfig();
+
+	if (providerName === 'deepl') {
+		return Boolean(providerAppId || providerAppSecret);
+	}
+
+	return Boolean(providerAppId && providerAppSecret);
+}
+
+function findSamgeCommandId(extension: vscode.Extension<any>, candidates: string[]): string | undefined {
+	const commands = extension.packageJSON?.contributes?.commands;
+	if (!Array.isArray(commands)) {
+		return undefined;
+	}
+
+	const commandIds = new Set<string>();
+	for (const item of commands) {
+		if (typeof item?.command === 'string') {
+			commandIds.add(item.command);
+		}
+	}
+
+	return candidates.find((commandId) => commandIds.has(commandId));
+}
+
+function normalizeSamgeResult(value: string): string {
+	const trimmed = value.trim();
+	if (!trimmed) {
+		return '';
+	}
+
+	return trimmed
+		.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+		.replace(/[^a-zA-Z0-9]+/g, ' ')
+		.trim()
+		.split(/\s+/)
+		.filter(Boolean)
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join('');
+}
+
+function isInvalidSamgeResult(value: string, sourceText: string): boolean {
+	const trimmed = value.trim();
+	if (!trimmed || trimmed === sourceText.trim()) {
+		return true;
+	}
+
+	return /providerapp(id|secret)|appid|appsecret|【error】|error|failed|unsupported|配置|请检查/i.test(trimmed);
+}
+
+function isSamgeFatalMessage(value: string): boolean {
+	const trimmed = value.trim();
+	if (!trimmed) {
+		return false;
+	}
+
+	if (/【error】|providerapp(id|secret)|appsecret|unsupported/i.test(trimmed)) {
+		return true;
+	}
+
+	return /[\u4e00-\u9fa5]/.test(trimmed) && /(appid|appId|请检查|配置|不存在|无效|失败)/i.test(trimmed);
+}
+
+async function readTranslatedTextFromCommand(commandId: string, sourceText: string): Promise<SamgeCommandReadResult> {
+	const previousEditor = vscode.window.activeTextEditor;
+	const document = await vscode.workspace.openTextDocument({
+		content: sourceText,
+		language: 'plaintext'
+	});
+	const editor = await vscode.window.showTextDocument(document, {
+		preview: true,
+		preserveFocus: false
+	});
+
+	const fullRange = new vscode.Range(
+		document.positionAt(0),
+		document.positionAt(document.getText().length)
+	);
+	editor.selection = new vscode.Selection(fullRange.start, fullRange.end);
+
+	try {
+		const commandResult = await vscode.commands.executeCommand(commandId);
+		if (typeof commandResult === 'string' && commandResult.trim()) {
+			if (isSamgeFatalMessage(commandResult)) {
+				return { fatalError: true };
+			}
+
+			if (!isInvalidSamgeResult(commandResult, sourceText)) {
+				return { value: commandResult.trim() };
+			}
+		}
+
+		for (let attempt = 0; attempt < 10; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 150));
+			const currentText = document.getText().trim();
+			if (isSamgeFatalMessage(currentText)) {
+				return { fatalError: true };
+			}
+
+			if (currentText && !isInvalidSamgeResult(currentText, sourceText)) {
+				return { value: currentText };
+			}
+		}
+	} catch (error) {
+		console.error(`调用 Samge Translate 命令失败: ${commandId}`, error);
+	} finally {
+		await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+		if (previousEditor) {
+			await vscode.window.showTextDocument(previousEditor.document, previousEditor.viewColumn);
+		}
+	}
+
+	return {};
+}
+
+async function tryTranslateMessagesWithSamge(messages: string[]): Promise<{
+	translations: Map<string, string>;
+	attempted: boolean;
+	skippedForMissingConfig: boolean;
+}> {
+	const extension = getSamgeTranslateExtension();
+	if (!extension) {
+		return {
+			translations: new Map<string, string>(),
+			attempted: false,
+			skippedForMissingConfig: false
+		};
+	}
+
+	if (!hasSamgeTranslateCredentials()) {
+		return {
+			translations: new Map<string, string>(),
+			attempted: false,
+			skippedForMissingConfig: true
+		};
+	}
+
+	await extension.activate();
+
+	const zh2varPascalCaseCommandId = findSamgeCommandId(extension, [
+		'samge.translate.zh2varPascalCase',
+		'samge.translate.zh2var'
+	]);
+	const zh2enReplaceCommandId = findSamgeCommandId(extension, [
+		'samge.translate.zh2enReplace',
+		'samge.translate.zh2en'
+	]);
+	if (!zh2varPascalCaseCommandId && !zh2enReplaceCommandId) {
+		return {
+			translations: new Map<string, string>(),
+			attempted: true,
+			skippedForMissingConfig: false
+		};
+	}
+
+	const translations = new Map<string, string>();
+	let shouldStopTrying = false;
+
+	for (const message of messages) {
+		if (shouldStopTrying) {
+			break;
+		}
+
+		const zh2varResult = zh2varPascalCaseCommandId
+			? await readTranslatedTextFromCommand(zh2varPascalCaseCommandId, message)
+			: {};
+		if (zh2varResult.fatalError) {
+			shouldStopTrying = true;
+			break;
+		}
+
+		const normalizedZh2Var = zh2varResult.value ? normalizeSamgeResult(zh2varResult.value) : '';
+		if (normalizedZh2Var) {
+			translations.set(message, normalizedZh2Var);
+			continue;
+		}
+
+		const zh2enResult = zh2enReplaceCommandId
+			? await readTranslatedTextFromCommand(zh2enReplaceCommandId, message)
+			: {};
+		if (zh2enResult.fatalError) {
+			shouldStopTrying = true;
+			break;
+		}
+
+		const normalizedZh2En = zh2enResult.value ? normalizeSamgeResult(zh2enResult.value) : '';
+		if (normalizedZh2En) {
+			translations.set(message, normalizedZh2En);
+		}
+	}
+
+	return {
+		translations,
+		attempted: true,
+		skippedForMissingConfig: false
+	};
+}
+
+async function maybeInstallSamgeTranslate() {
+	try {
+		await vscode.commands.executeCommand(
+			'workbench.extensions.installExtension',
+			'samge.vscode-samge-translate'
+		);
+		vscode.window.showInformationMessage('VSCode Samge Translate 安装完成后，请重新执行中文转换。');
+	} catch (error) {
+		vscode.window.showWarningMessage(`自动安装 VSCode Samge Translate 失败，请手动安装。${error}`);
+	}
+}
+
+async function maybeHandleSamgeTranslateAssistance(syncResult: I18nSyncResult) {
+	if (syncResult.unresolvedMessages.length === 0) {
+		return;
+	}
+
+	const extension = getSamgeTranslateExtension();
+	if (!extension) {
+		return;
+	}
+
+	if (syncResult.samgeTranslateSkippedForMissingConfig) {
+		if (hasShownSamgeConfigPrompt) {
+			return;
+		}
+
+		hasShownSamgeConfigPrompt = true;
+		vscode.window.showInformationMessage(
+			'请检查/配置 appId，具体配置请参照 VSCode Samge Translate 插件的详细说明'
+		);
+	}
+}
+
 function showSingleFileResult(baseMessage: string, syncResult: I18nSyncResult) {
-	const suffixParts: string[] = [];
+	let message = baseMessage;
 
-	if (syncResult.moduleFilesUpdated > 0) {
-		suffixParts.push(`模块 i18n 更新 ${syncResult.moduleFilesUpdated} 个`);
+	if (syncResult.unresolvedMessages.length > 0 && !getSamgeTranslateExtension()) {
+		message = `${baseMessage} 。建议安装“VSCode Samge Translate”插件，执行更完善的自动翻译。`;
 	}
-
-	if (syncResult.globalFilesUpdated > 0) {
-		suffixParts.push(`全局聚合更新 ${syncResult.globalFilesUpdated} 个`);
-	}
-
-	const message = suffixParts.length > 0
-		? `${baseMessage} ${suffixParts.join(', ')}.`
-		: baseMessage;
 
 	if (syncResult.warnings.length > 0) {
 		vscode.window.showWarningMessage(`${message} ${syncResult.warnings.join(' ')}`);
@@ -486,21 +785,17 @@ function showSingleFileResult(baseMessage: string, syncResult: I18nSyncResult) {
 }
 
 function buildFolderSuccessMessage(convertedCount: number, syncResult: I18nSyncResult): string {
-	const parts = [`转换完成！共转换了 ${convertedCount} 个文件。`];
+	let message = `执行成功！共转换了 ${convertedCount} 个文件。`;
 
-	if (syncResult.moduleFilesUpdated > 0) {
-		parts.push(`模块 i18n 更新 ${syncResult.moduleFilesUpdated} 个。`);
-	}
-
-	if (syncResult.globalFilesUpdated > 0) {
-		parts.push(`全局聚合更新 ${syncResult.globalFilesUpdated} 个。`);
+	if (syncResult.unresolvedMessages.length > 0 && !getSamgeTranslateExtension()) {
+		message += ' 建议安装“VSCode Samge Translate”插件，执行更完善的自动翻译。';
 	}
 
 	if (syncResult.warnings.length > 0) {
-		parts.push(syncResult.warnings.join(' '));
+		message += ` ${syncResult.warnings.join(' ')}`;
 	}
 
-	return parts.join(' ');
+	return message;
 }
 
 // 根据文件扩展名获取语言 ID

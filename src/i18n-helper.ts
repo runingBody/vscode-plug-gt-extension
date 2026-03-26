@@ -301,24 +301,42 @@ export function parseTranslationMemory(content: string | undefined): Map<string,
 	return content ? parseTranslationEntries(content) : new Map<string, string>();
 }
 
+export type MergeModuleTranslationContentResult = {
+	content: string;
+	unresolvedMessages: string[];
+};
+
 export function mergeModuleTranslationContent(
 	existingContent: string | undefined,
 	messages: string[],
 	translationMemory: Map<string, string>
-): string {
+): MergeModuleTranslationContentResult {
 	const entries = existingContent ? parseTranslationEntries(existingContent) : new Map<string, string>();
 	const normalizedTranslationMemory = createNormalizedTranslationMemory(translationMemory);
+	const unresolvedMessages: string[] = [];
 
 	for (const message of messages) {
 		if (!entries.has(message)) {
+			const translatedValue = buildPascalCaseEnglishValue(
+				message,
+				translationMemory,
+				normalizedTranslationMemory
+			);
 			entries.set(
 				message,
-				buildPascalCaseEnglishValue(message, translationMemory, normalizedTranslationMemory)
+				translatedValue
 			);
+
+			if (!translatedValue) {
+				unresolvedMessages.push(message);
+			}
 		}
 	}
 
-	return formatTranslationEntries(entries);
+	return {
+		content: formatTranslationEntries(entries),
+		unresolvedMessages
+	};
 }
 
 export function buildImportName(moduleDir: string, workspaceRoot: string): string {
@@ -357,15 +375,13 @@ function insertImport(content: string, importName: string, importPath: string): 
 		}
 	}
 
-	let insertAt = 0;
-
 	for (const statement of sourceFile.statements) {
 		if (ts.isImportDeclaration(statement)) {
-			insertAt = statement.end + 1;
+			return content.slice(0, statement.getFullStart()) + importStatement + content.slice(statement.getFullStart());
 		}
 	}
 
-	return content.slice(0, insertAt) + importStatement + content.slice(insertAt);
+	return importStatement + content;
 }
 
 function insertSpread(content: string, importName: string): string {
@@ -382,11 +398,13 @@ function insertSpread(content: string, importName: string): string {
 		}
 	}
 
-	const insertAt = objectLiteral.end - 1;
+	const insertAt = objectLiteral.properties.pos;
 	const before = content.slice(0, insertAt);
-	const insertion = `${before.endsWith('\n') ? '' : '\n'}\t...${importName},\n`;
+	const after = content.slice(insertAt);
+	const needsTrailingNewline = after.length > 0 && !after.startsWith('\n');
+	const insertion = `\n\t...${importName},${needsTrailingNewline ? '\n' : ''}`;
 
-	return before + insertion + content.slice(insertAt);
+	return before + insertion + after;
 }
 
 export function upsertGlobalNamespaceContent(
