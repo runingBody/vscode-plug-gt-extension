@@ -20,6 +20,11 @@ export function activate(context: vscode.ExtensionContext) {
 			const fullText = document.getText();
 			const convertedText = convertChineseToGt(fullText, document.languageId);
 
+			if (convertedText === fullText) {
+				vscode.window.showInformationMessage('No convertible Chinese text found.');
+				return;
+			}
+
 			await editor.edit((editBuilder) => {
 				const fullRange = new vscode.Range(
 					document.positionAt(0),
@@ -51,6 +56,11 @@ export function activate(context: vscode.ExtensionContext) {
 			const document = editor.document;
 			const selectedText = document.getText(selection);
 			const convertedText = convertChineseToGt(selectedText, document.languageId);
+
+			if (convertedText === selectedText) {
+				vscode.window.showInformationMessage('No convertible Chinese text found in selection.');
+				return;
+			}
 
 			await editor.edit((editBuilder) => {
 				editBuilder.replace(selection, convertedText);
@@ -238,4 +248,3 @@ function getLanguageId(ext: string): string {
 }
 
 export function deactivate() {}
-
