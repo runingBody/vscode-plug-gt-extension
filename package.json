@@ -2,9 +2,9 @@
   "name": "qk-chinese-to-gt-converter",
   "displayName": "Chinese to gt() Converter",
   "description": "将代码中的中文转换为 gt('') 函数包裹的形式",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publisher": "liurun",
-  "icon": "src/Thunder-move.png",
+  "icon": "resources/thunder.png",
   "engines": {
     "vscode": "^1.60.0"
   },
