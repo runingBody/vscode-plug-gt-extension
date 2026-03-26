@@ -1,7 +1,40 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { convertChineseToGt } from './converter';
+import { convertChineseToGtWithReport } from './converter';
+import {
+	buildImportName,
+	mergeModuleTranslationContent,
+	parseTranslationMemory,
+	toImportPath,
+	upsertGlobalNamespaceContent
+} from './i18n-helper';
+
+type I18nSyncResult = {
+	moduleFilesUpdated: number;
+	globalFilesUpdated: number;
+	warnings: string[];
+};
+
+const INDEX_FILE_NAMES = ['index.tsx', 'index.ts', 'index.jsx', 'index.js'];
+const MODULE_ROOT_MARKER_FILES = ['ui-helper.tsx', 'ui-content.ts', 'page.tsx'];
+const MODULE_CHILD_DIR_NAMES = new Set([
+	'components',
+	'component',
+	'hooks',
+	'utils',
+	'services',
+	'service',
+	'constants',
+	'constant',
+	'types',
+	'models',
+	'apis',
+	'api',
+	'store',
+	'stores',
+	'config'
+]);
 
 export function activate(context: vscode.ExtensionContext) {
 	console.log('Chinese to gt() converter is now active!');
@@ -18,7 +51,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 			const document = editor.document;
 			const fullText = document.getText();
-			const convertedText = convertChineseToGt(fullText, document.languageId);
+			const report = convertChineseToGtWithReport(fullText, document.languageId);
+			const convertedText = report.text;
 
 			if (convertedText === fullText) {
 				vscode.window.showInformationMessage('No convertible Chinese text found.');
@@ -33,7 +67,8 @@ export function activate(context: vscode.ExtensionContext) {
 				editBuilder.replace(fullRange, convertedText);
 			});
 
-			vscode.window.showInformationMessage('File converted successfully!');
+			const syncResult = syncDocumentI18n(document.uri, report.messages, document.uri.fsPath);
+			showSingleFileResult('File converted successfully!', syncResult);
 		}
 	);
 
@@ -55,7 +90,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 			const document = editor.document;
 			const selectedText = document.getText(selection);
-			const convertedText = convertChineseToGt(selectedText, document.languageId);
+			const report = convertChineseToGtWithReport(selectedText, document.languageId);
+			const convertedText = report.text;
 
 			if (convertedText === selectedText) {
 				vscode.window.showInformationMessage('No convertible Chinese text found in selection.');
@@ -66,7 +102,8 @@ export function activate(context: vscode.ExtensionContext) {
 				editBuilder.replace(selection, convertedText);
 			});
 
-			vscode.window.showInformationMessage('Selection converted successfully!');
+			const syncResult = syncDocumentI18n(document.uri, report.messages, document.uri.fsPath);
+			showSingleFileResult('Selection converted successfully!', syncResult);
 		}
 	);
 
@@ -134,6 +171,9 @@ export function activate(context: vscode.ExtensionContext) {
 					async (progress, token) => {
 						let convertedCount = 0;
 						let errorCount = 0;
+						const moduleMessages = new Map<string, Set<string>>();
+						let workspaceRoot: string | undefined;
+						let targetModuleRoot: string | undefined;
 
 						for (let i = 0; i < filesToConvert.length; i++) {
 							if (token.isCancellationRequested) {
@@ -158,27 +198,46 @@ export function activate(context: vscode.ExtensionContext) {
 								const languageId = getLanguageId(ext);
 								
 								// 转换内容
-								const convertedContent = convertChineseToGt(fileContent, languageId);
+								const report = convertChineseToGtWithReport(fileContent, languageId);
+								const convertedContent = report.text;
 								
 								// 如果内容有变化，写入文件
 								if (fileContent !== convertedContent) {
 									fs.writeFileSync(filePath, convertedContent, 'utf-8');
 									convertedCount++;
-								}
+
+										if (!workspaceRoot) {
+											workspaceRoot = findWorkspaceRootFromPath(filePath);
+										}
+
+										if (!targetModuleRoot && workspaceRoot) {
+											targetModuleRoot = resolveModuleRoot(targetUri.fsPath, workspaceRoot);
+										}
+
+										if (workspaceRoot && targetModuleRoot) {
+											const existing = moduleMessages.get(targetModuleRoot) ?? new Set<string>();
+											for (const message of report.messages) {
+												existing.add(message);
+											}
+											moduleMessages.set(targetModuleRoot, existing);
+										}
+									}
 							} catch (error) {
 								console.error(`转换文件失败: ${filePath}`, error);
 								errorCount++;
 							}
 						}
 
+						const syncResult = syncModuleMessageMap(moduleMessages, workspaceRoot);
+
 						// 显示完成消息
 						if (errorCount === 0) {
 							vscode.window.showInformationMessage(
-								`转换完成！共转换了 ${convertedCount} 个文件。`
+								buildFolderSuccessMessage(convertedCount, syncResult)
 							);
 						} else {
 							vscode.window.showWarningMessage(
-								`转换完成！成功: ${convertedCount} 个，失败: ${errorCount} 个。`
+								`${buildFolderSuccessMessage(convertedCount, syncResult)} 失败: ${errorCount} 个。`
 							);
 						}
 					}
@@ -211,7 +270,9 @@ function collectFiles(folderPath: string): string[] {
 						entry.name === 'dist' ||
 						entry.name === 'build' ||
 						entry.name === '.next' ||
-						entry.name === 'out') {
+						entry.name === 'out' ||
+						entry.name === '_i18n' ||
+						entry.name === 'i18n') {
 						continue;
 					}
 					walkDir(fullPath);
@@ -229,6 +290,217 @@ function collectFiles(folderPath: string): string[] {
 
 	walkDir(folderPath);
 	return files;
+}
+
+function findWorkspaceRootFromUri(uri: vscode.Uri): string | undefined {
+	return vscode.workspace.getWorkspaceFolder(uri)?.uri.fsPath;
+}
+
+function findWorkspaceRootFromPath(filePath: string): string | undefined {
+	const workspaceFolder = vscode.workspace.workspaceFolders?.find((folder) => {
+		const folderPath = folder.uri.fsPath;
+		return filePath === folderPath || filePath.startsWith(`${folderPath}${path.sep}`);
+	});
+
+	return workspaceFolder?.uri.fsPath;
+}
+
+function hasIndexFile(dir: string): boolean {
+	return INDEX_FILE_NAMES.some((fileName) => fs.existsSync(path.join(dir, fileName)));
+}
+
+function hasModuleRootMarker(dir: string): boolean {
+	return MODULE_ROOT_MARKER_FILES.some((fileName) => fs.existsSync(path.join(dir, fileName)));
+}
+
+function resolveModuleRoot(targetPath: string, workspaceRoot: string): string {
+	let currentDir = fs.statSync(targetPath).isDirectory() ? targetPath : path.dirname(targetPath);
+	const baseName = path.basename(targetPath);
+
+	if (!fs.statSync(targetPath).isDirectory() && MODULE_ROOT_MARKER_FILES.includes(baseName)) {
+		return currentDir;
+	}
+
+	if (path.basename(currentDir) === '_i18n') {
+		currentDir = path.dirname(currentDir);
+	}
+
+	let cursor = currentDir;
+
+	while (cursor.startsWith(workspaceRoot) && cursor !== workspaceRoot) {
+		if (hasModuleRootMarker(cursor)) {
+			return cursor;
+		}
+
+		if (hasIndexFile(cursor)) {
+			return cursor;
+		}
+
+		const baseName = path.basename(cursor);
+		if (MODULE_CHILD_DIR_NAMES.has(baseName)) {
+			return path.dirname(cursor);
+		}
+
+		const parent = path.dirname(cursor);
+		if (parent === cursor) {
+			break;
+		}
+
+		cursor = parent;
+	}
+
+	return currentDir;
+}
+
+function resolveGlobalNamespaceFile(workspaceRoot: string): string | undefined {
+	const candidates = [
+		path.join(workspaceRoot, 'src', 'i18n', 'namespace', 'global', 'en.ts'),
+		path.join(workspaceRoot, 'src', 'i18n', 'namespace', 'global', 'en.tsx')
+	];
+
+	for (const candidate of candidates) {
+		if (fs.existsSync(candidate)) {
+			return candidate;
+		}
+	}
+
+	const i18nRoot = path.join(workspaceRoot, 'src', 'i18n');
+	if (fs.existsSync(i18nRoot) && fs.statSync(i18nRoot).isDirectory()) {
+		return candidates[0];
+	}
+
+	return undefined;
+}
+
+function syncDocumentI18n(uri: vscode.Uri, messages: string[], targetPath: string): I18nSyncResult {
+	const workspaceRoot = findWorkspaceRootFromUri(uri);
+	if (!workspaceRoot || uri.scheme !== 'file') {
+		return {
+			moduleFilesUpdated: 0,
+			globalFilesUpdated: 0,
+			warnings: messages.length > 0 ? ['当前文件不在本地工作区，已跳过 i18n 文件生成。'] : []
+		};
+	}
+
+	const moduleDir = resolveModuleRoot(targetPath, workspaceRoot);
+	const messageMap = new Map<string, Set<string>>();
+	messageMap.set(moduleDir, new Set(messages));
+	return syncModuleMessageMap(messageMap, workspaceRoot);
+}
+
+function syncModuleMessageMap(
+	moduleMessages: Map<string, Set<string>>,
+	workspaceRoot: string | undefined
+): I18nSyncResult {
+	if (!workspaceRoot || moduleMessages.size === 0) {
+		return { moduleFilesUpdated: 0, globalFilesUpdated: 0, warnings: [] };
+	}
+
+	let moduleFilesUpdated = 0;
+	let globalFilesUpdated = 0;
+	const warnings: string[] = [];
+	const globalNamespaceFile = resolveGlobalNamespaceFile(workspaceRoot);
+	const translationMemory = parseTranslationMemory(
+		globalNamespaceFile && fs.existsSync(globalNamespaceFile)
+			? fs.readFileSync(globalNamespaceFile, 'utf-8')
+			: undefined
+	);
+
+	for (const [moduleDir, messageSet] of moduleMessages) {
+		const messages = Array.from(messageSet);
+		if (messages.length === 0) {
+			continue;
+		}
+
+		const moduleI18nDir = path.join(moduleDir, '_i18n');
+		const moduleEnFile = path.join(moduleI18nDir, 'en.ts');
+		const existingModuleContent = fs.existsSync(moduleEnFile)
+			? fs.readFileSync(moduleEnFile, 'utf-8')
+			: undefined;
+		const nextModuleContent = mergeModuleTranslationContent(
+			existingModuleContent,
+			messages,
+			translationMemory
+		);
+
+		fs.mkdirSync(moduleI18nDir, { recursive: true });
+		if (existingModuleContent !== nextModuleContent) {
+			fs.writeFileSync(moduleEnFile, nextModuleContent, 'utf-8');
+			moduleFilesUpdated++;
+		}
+
+		if (!globalNamespaceFile) {
+			continue;
+		}
+
+		const importName = buildImportName(moduleDir, workspaceRoot);
+		const importPath = toImportPath(globalNamespaceFile, moduleEnFile);
+		const existingGlobalContent = fs.existsSync(globalNamespaceFile)
+			? fs.readFileSync(globalNamespaceFile, 'utf-8')
+			: undefined;
+		const nextGlobalContent = upsertGlobalNamespaceContent(
+			existingGlobalContent,
+			importName,
+			importPath
+		);
+
+		fs.mkdirSync(path.dirname(globalNamespaceFile), { recursive: true });
+		if (existingGlobalContent !== nextGlobalContent) {
+			fs.writeFileSync(globalNamespaceFile, nextGlobalContent, 'utf-8');
+			globalFilesUpdated++;
+		}
+	}
+
+	if (!globalNamespaceFile) {
+		warnings.push('未找到 src/i18n 目录，已仅生成模块级 _i18n/en.ts。');
+	}
+
+	return {
+		moduleFilesUpdated,
+		globalFilesUpdated,
+		warnings
+	};
+}
+
+function showSingleFileResult(baseMessage: string, syncResult: I18nSyncResult) {
+	const suffixParts: string[] = [];
+
+	if (syncResult.moduleFilesUpdated > 0) {
+		suffixParts.push(`模块 i18n 更新 ${syncResult.moduleFilesUpdated} 个`);
+	}
+
+	if (syncResult.globalFilesUpdated > 0) {
+		suffixParts.push(`全局聚合更新 ${syncResult.globalFilesUpdated} 个`);
+	}
+
+	const message = suffixParts.length > 0
+		? `${baseMessage} ${suffixParts.join(', ')}.`
+		: baseMessage;
+
+	if (syncResult.warnings.length > 0) {
+		vscode.window.showWarningMessage(`${message} ${syncResult.warnings.join(' ')}`);
+		return;
+	}
+
+	vscode.window.showInformationMessage(message);
+}
+
+function buildFolderSuccessMessage(convertedCount: number, syncResult: I18nSyncResult): string {
+	const parts = [`转换完成！共转换了 ${convertedCount} 个文件。`];
+
+	if (syncResult.moduleFilesUpdated > 0) {
+		parts.push(`模块 i18n 更新 ${syncResult.moduleFilesUpdated} 个。`);
+	}
+
+	if (syncResult.globalFilesUpdated > 0) {
+		parts.push(`全局聚合更新 ${syncResult.globalFilesUpdated} 个。`);
+	}
+
+	if (syncResult.warnings.length > 0) {
+		parts.push(syncResult.warnings.join(' '));
+	}
+
+	return parts.join(' ');
 }
 
 // 根据文件扩展名获取语言 ID

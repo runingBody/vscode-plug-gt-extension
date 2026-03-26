@@ -2,7 +2,8 @@
   "name": "chinese-to-gt-converter",
   "displayName": "Chinese to gt() Converter",
   "description": "将代码中的中文转换为 gt('') 函数包裹的形式",
-  "version": "1.0.2",
+  "version": "1.0.0",
+  "publisher": "liurun",
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -83,7 +84,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node out/converter.test.js"
+    "test": "npm run compile && node out/converter.test.js && node out/i18n-helper.test.js"
   },
   "dependencies": {
     "typescript": "^4.9.0"

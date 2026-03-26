@@ -13,6 +13,12 @@ type Replacement = {
 	start: number;
 	end: number;
 	text: string;
+	messages?: string[];
+};
+
+export type ConversionReport = {
+	text: string;
+	messages: string[];
 };
 
 function containsChinese(text: string): boolean {
@@ -274,14 +280,16 @@ function getStringLiteralReplacement(
 		return {
 			start: node.getStart(sourceFile),
 			end: node.getEnd(),
-			text: `{gt(${raw})}`
+			text: `{gt(${raw})}`,
+			messages: [node.text]
 		};
 	}
 
 	return {
 		start: node.getStart(sourceFile),
 		end: node.getEnd(),
-		text: `gt(${raw})`
+		text: `gt(${raw})`,
+		messages: [node.text]
 	};
 }
 
@@ -299,7 +307,8 @@ function getNoSubstitutionTemplateReplacement(
 	return {
 		start: node.getStart(),
 		end: node.getEnd(),
-		text: `gt(${quoteText(node.text)})`
+		text: `gt(${quoteText(node.text)})`,
+		messages: [node.text]
 	};
 }
 
@@ -341,10 +350,13 @@ function getTemplateExpressionReplacement(
 		return undefined;
 	}
 
+	const messages = literalParts.filter((part) => part && containsChinese(part));
+
 	return {
 		start: node.getStart(sourceFile),
 		end: node.getEnd(),
-		text: parts.join(' + ')
+		text: parts.join(' + '),
+		messages
 	};
 }
 
@@ -370,7 +382,8 @@ function getJsxTextReplacement(node: ts.JsxText, sourceText: string): Replacemen
 	return {
 		start: node.pos,
 		end: node.end,
-		text: `${leading}{gt(${quoteText(core)})}${trailing}`
+		text: `${leading}{gt(${quoteText(core)})}${trailing}`,
+		messages: [core]
 	};
 }
 
@@ -391,14 +404,30 @@ function applyReplacements(text: string, replacements: Replacement[]): string {
 	return result;
 }
 
-export function convertChineseToGt(text: string, languageId: string): string {
+function uniqueMessages(messages: string[]): string[] {
+	const seen = new Set<string>();
+	const results: string[] = [];
+
+	for (const message of messages) {
+		if (!message || seen.has(message)) {
+			continue;
+		}
+
+		seen.add(message);
+		results.push(message);
+	}
+
+	return results;
+}
+
+export function convertChineseToGtWithReport(text: string, languageId: string): ConversionReport {
 	if (!SUPPORTED_LANGUAGES.has(languageId)) {
-		return text;
+		return { text, messages: [] };
 	}
 
 	const scriptKind = getScriptKind(languageId);
 	if (scriptKind === undefined) {
-		return text;
+		return { text, messages: [] };
 	}
 
 	const sourceFile = ts.createSourceFile(
@@ -454,8 +483,17 @@ export function convertChineseToGt(text: string, languageId: string): string {
 	visit(sourceFile);
 
 	if (replacements.length === 0) {
-		return text;
+		return { text, messages: [] };
 	}
 
-	return applyReplacements(text, replacements);
+	return {
+		text: applyReplacements(text, replacements),
+		messages: uniqueMessages(
+			replacements.flatMap((replacement) => replacement.messages ?? [])
+		)
+	};
+}
+
+export function convertChineseToGt(text: string, languageId: string): string {
+	return convertChineseToGtWithReport(text, languageId).text;
 }

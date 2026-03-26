@@ -1,5 +1,5 @@
 import { strict as assert } from 'assert';
-import { convertChineseToGt } from './converter';
+import { convertChineseToGt, convertChineseToGtWithReport } from './converter';
 
 type TestCase = {
 	name: string;
@@ -69,5 +69,11 @@ for (const testCase of cases) {
 	const actual = convertChineseToGt(testCase.input, testCase.languageId);
 	assert.equal(actual, testCase.expected, testCase.name);
 }
+
+const report = convertChineseToGtWithReport(
+	'const title = `你好${name}，欢迎`;\n<div title="标题">创建人</div>',
+	'typescriptreact'
+);
+assert.deepEqual(report.messages, ['你好', '，欢迎', '标题', '创建人']);
 
 console.log(`converter tests passed: ${cases.length}`);
