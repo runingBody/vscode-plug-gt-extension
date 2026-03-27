@@ -316,20 +316,24 @@ export function mergeModuleTranslationContent(
 	const unresolvedMessages: string[] = [];
 
 	for (const message of messages) {
-		if (!entries.has(message)) {
-			const translatedValue = buildPascalCaseEnglishValue(
-				message,
-				translationMemory,
-				normalizedTranslationMemory
-			);
-			entries.set(
-				message,
-				translatedValue
-			);
+		const existingValue = entries.get(message);
+		const shouldRetryTranslation = existingValue !== undefined && !existingValue.trim();
+		if (existingValue !== undefined && !shouldRetryTranslation) {
+			continue;
+		}
 
-			if (!translatedValue) {
-				unresolvedMessages.push(message);
-			}
+		const translatedValue = buildPascalCaseEnglishValue(
+			message,
+			translationMemory,
+			normalizedTranslationMemory
+		);
+		entries.set(
+			message,
+			translatedValue
+		);
+
+		if (!translatedValue) {
+			unresolvedMessages.push(message);
 		}
 	}
 

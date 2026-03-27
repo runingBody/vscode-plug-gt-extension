@@ -9,6 +9,10 @@ import {
 	toImportPath,
 	upsertGlobalNamespaceContent
 } from './i18n-helper';
+import {
+	DirectTranslationConfig,
+	translateMessagesWithDirectProvider
+} from './translator';
 
 type I18nSyncResult = {
 	moduleFilesUpdated: number;
@@ -456,6 +460,26 @@ async function syncModuleMessageMap(
 		);
 
 		if (mergeResult.unresolvedMessages.length > 0) {
+			const directResult = await translateMessagesWithDirectProvider(
+				mergeResult.unresolvedMessages,
+				getDirectTranslationConfig()
+			);
+
+			if (directResult.translations.size > 0) {
+				const mergedTranslationMemory = new Map(translationMemory);
+				for (const [message, translatedValue] of directResult.translations) {
+					mergedTranslationMemory.set(message, translatedValue);
+				}
+
+				mergeResult = mergeModuleTranslationContent(
+					existingModuleContent,
+					messages,
+					mergedTranslationMemory
+				);
+			}
+		}
+
+		if (mergeResult.unresolvedMessages.length > 0) {
 			const samgeResult = await tryTranslateMessagesWithSamge(mergeResult.unresolvedMessages);
 			samgeTranslateAttempted = samgeTranslateAttempted || samgeResult.attempted;
 			samgeTranslateSkippedForMissingConfig =
@@ -524,6 +548,63 @@ async function syncModuleMessageMap(
 
 function getSamgeTranslateExtension(): vscode.Extension<any> | undefined {
 	return vscode.extensions.getExtension('samge.vscode-samge-translate');
+}
+
+function getDirectTranslationConfig(): DirectTranslationConfig {
+	const config = vscode.workspace.getConfiguration();
+	const providerSetting = config.get<string>('chineseToGt.translation.provider')?.trim().toLowerCase() ?? 'auto';
+	const ownAccessKeyId = config.get<string>('chineseToGt.translation.alibaba.accessKeyId')?.trim() ?? '';
+	const ownAccessKeySecret = config.get<string>('chineseToGt.translation.alibaba.accessKeySecret')?.trim() ?? '';
+	const samgeProviderName = config.get<string>('samge.translate.providerName')?.trim().toLowerCase() ?? '';
+	const samgeAccessKeyId = config.get<string>('samge.translate.providerAppId')?.trim() ?? '';
+	const samgeAccessKeySecret = config.get<string>('samge.translate.providerAppSecret')?.trim() ?? '';
+
+	if (providerSetting === 'none') {
+		return {
+			provider: 'none',
+			accessKeyId: '',
+			accessKeySecret: ''
+		};
+	}
+
+	if (providerSetting === 'alibaba') {
+		return {
+			provider: 'alibaba',
+			accessKeyId: ownAccessKeyId || samgeAccessKeyId,
+			accessKeySecret: ownAccessKeySecret || samgeAccessKeySecret
+		};
+	}
+
+	if (ownAccessKeyId && ownAccessKeySecret) {
+		return {
+			provider: 'alibaba',
+			accessKeyId: ownAccessKeyId,
+			accessKeySecret: ownAccessKeySecret
+		};
+	}
+
+	if (samgeProviderName === 'alibaba' && samgeAccessKeyId && samgeAccessKeySecret) {
+		return {
+			provider: 'alibaba',
+			accessKeyId: samgeAccessKeyId,
+			accessKeySecret: samgeAccessKeySecret
+		};
+	}
+
+	return {
+		provider: 'none',
+		accessKeyId: '',
+		accessKeySecret: ''
+	};
+}
+
+function hasDirectTranslationProviderConfigured(): boolean {
+	const config = getDirectTranslationConfig();
+	return Boolean(
+		config.provider !== 'none' &&
+		config.accessKeyId.trim() &&
+		config.accessKeySecret.trim()
+	);
 }
 
 function getSamgeTranslateConfig(): SamgeTranslateConfig {
@@ -772,7 +853,11 @@ async function maybeHandleSamgeTranslateAssistance(syncResult: I18nSyncResult) {
 function showSingleFileResult(baseMessage: string, syncResult: I18nSyncResult) {
 	let message = baseMessage;
 
-	if (syncResult.unresolvedMessages.length > 0 && !getSamgeTranslateExtension()) {
+	if (
+		syncResult.unresolvedMessages.length > 0 &&
+		!getSamgeTranslateExtension() &&
+		!hasDirectTranslationProviderConfigured()
+	) {
 		message = `${baseMessage} 。建议安装“VSCode Samge Translate”插件，执行更完善的自动翻译。`;
 	}
 
@@ -787,7 +872,11 @@ function showSingleFileResult(baseMessage: string, syncResult: I18nSyncResult) {
 function buildFolderSuccessMessage(convertedCount: number, syncResult: I18nSyncResult): string {
 	let message = `执行成功！共转换了 ${convertedCount} 个文件。`;
 
-	if (syncResult.unresolvedMessages.length > 0 && !getSamgeTranslateExtension()) {
+	if (
+		syncResult.unresolvedMessages.length > 0 &&
+		!getSamgeTranslateExtension() &&
+		!hasDirectTranslationProviderConfigured()
+	) {
 		message += ' 建议安装“VSCode Samge Translate”插件，执行更完善的自动翻译。';
 	}
 

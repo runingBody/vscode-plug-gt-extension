@@ -2,16 +2,17 @@
 
 一个 VSCode 插件，用于把代码中的中文文案转换为 `gt(...)` 调用，便于统一接入国际化。
 
-当前版本的核心转换逻辑基于 TypeScript AST，而不是简单正则替换，重点解决了以下问题：
+特性如下：
 
-- 识别更多真实代码场景，而不是只处理少量固定格式
+- 识别更多真实代码场景（7大常用类场景）
 - 跳过注释中的中文
 - 跳过已经包裹过的 `gt(...)`
 - 更稳妥地处理字符串拼接和模板字符串
 - 减少误转换，例如条件比较值、模块路径、对象 key、类型字面量等
-- 转换成功后自动生成模块级 `_i18n/en.ts`
+- 转换成功后会收集本次新增中文，自动生成模块级文件 `_i18n/en.ts`
 - 自动尝试把模块 i18n 注入到全局 `src/i18n/namespace/global/en.ts`
-- 体验更高阶的自翻译能力，需要安装VSCode Samge Translate插件，并配置 appId和appSecret. （阿里或者百度等都有免费额度 5-10万字符/一月，足够使用了）
+
+Tip: 当前插件已内置阿里翻译能力，优先建议直接配置本插件自己的翻译参数。`VSCode Samge Translate` 仍可作为可选兜底能力使用。
 
 ## 适用文件
 
@@ -233,10 +234,58 @@ if (status === "已完成") {
 - 转换前建议先提交代码，方便回滚
 - 插件会自动生成 `_i18n/en.ts`，并尝试生成英文 PascalCase value
 - 优先复用全局 `src/i18n/namespace/global/en.ts` 中已有的英文字典，再转成 PascalCase
-- 如果全局词典里没有对应翻译，会按内置规则生成英文名，极少数场景仍建议人工复核
+- 如果全局词典里没有对应翻译，会优先尝试内置阿里翻译，再按内置规则生成英文名，极少数场景仍建议人工复核
 - 插件会尽量注入全局 `src/i18n/namespace/global/en.ts`，前提是工程里存在 `src/i18n` 目录
 - 插件仍然不会自动插入业务文件里的 `gt` import
 - 对于特别复杂的业务表达式，建议转换后人工复核一次
+
+## 内置翻译配置
+
+如果希望在生成 `_i18n/en.ts` 时自动把复杂中文翻译成英文 value，可以直接配置本插件内置的阿里翻译能力。
+
+配置位置：
+
+- VSCode 设置界面中搜索：`chineseToGt.translation`
+- 或直接编辑用户设置文件：`~/Library/Application Support/Code/User/settings.json`
+
+推荐配置：
+
+```json
+{
+  "chineseToGt.translation.provider": "alibaba",
+  "chineseToGt.translation.alibaba.accessKeyId": "你的AccessKeyId",
+  "chineseToGt.translation.alibaba.accessKeySecret": "你的AccessKeySecret"
+}
+```
+
+说明：
+
+- `provider = alibaba`：强制使用插件内置阿里翻译
+- `accessKeyId` / `accessKeySecret`：填写你自己的阿里云凭证
+- 翻译成功后会自动写入 `_i18n/en.ts`
+- 翻译失败时会回退为空字符串 `""`
+- 之前已生成为空字符串的词条，重新执行命令时会再次尝试翻译
+
+## 与 Samge Translate 的关系
+
+如果你已经安装并配置了 `VSCode Samge Translate`，也可以继续复用它的配置。
+
+自动模式下：
+
+```json
+{
+  "chineseToGt.translation.provider": "auto",
+  "samge.translate.providerName": "alibaba",
+  "samge.translate.providerAppId": "你的AccessKeyId",
+  "samge.translate.providerAppSecret": "你的AccessKeySecret"
+}
+```
+
+说明：
+
+- `auto` 会优先读取本插件自己的阿里翻译配置
+- 如果本插件没有单独配置，则会尝试复用 `samge.translate` 的阿里配置
+- Samge 现在只是兜底方式，不再是主流程依赖
 
 ## 许可证
 

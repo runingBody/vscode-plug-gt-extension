@@ -2,7 +2,7 @@
   "name": "qk-chinese-to-gt-converter",
   "displayName": "qk-chinese-to-gt-converter",
   "description": "将代码中的中文转换为 gt('') 函数包裹的形式",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "publisher": "liurun",
   "icon": "resources/thunder.png",
   "engines": {
@@ -79,13 +79,34 @@
         "key": "ctrl+alt+g",
         "mac": "cmd+alt+g"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Chinese To Gt Translation",
+      "properties": {
+        "chineseToGt.translation.provider": {
+          "type": "string",
+          "enum": ["auto", "none", "alibaba"],
+          "default": "auto",
+          "description": "复杂中文转英文时使用的内置翻译提供方。auto 会优先读取本插件配置，其次复用 samge.translate 的 alibaba 配置。"
+        },
+        "chineseToGt.translation.alibaba.accessKeyId": {
+          "type": "string",
+          "default": "",
+          "description": "内置阿里翻译的 AccessKeyId。"
+        },
+        "chineseToGt.translation.alibaba.accessKeySecret": {
+          "type": "string",
+          "default": "",
+          "description": "内置阿里翻译的 AccessKeySecret。"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node out/converter.test.js && node out/i18n-helper.test.js"
+    "test": "npm run compile && node out/converter.test.js && node out/i18n-helper.test.js && node out/translator.test.js"
   },
   "dependencies": {
     "typescript": "^4.9.0"

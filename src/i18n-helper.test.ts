@@ -63,6 +63,17 @@ assert.equal(
 );
 assert.deepEqual(mergedUnknown.unresolvedMessages, ['完全未知业务词']);
 
+const mergedRetryEmpty = mergeModuleTranslationContent(
+	'const en = {\n\t"订单编号": "",\n\t"搜索": "Search",\n};\n\nexport default en;\n',
+	['订单编号', '搜索'],
+	globalTranslationMemory
+);
+assert.equal(
+	mergedRetryEmpty.content,
+	'const en = {\n\t"订单编号": "OrderNumber",\n\t"搜索": "Search",\n};\n\nexport default en;\n'
+);
+assert.deepEqual(mergedRetryEmpty.unresolvedMessages, []);
+
 assert.equal(
 	buildImportName('/workspace/src/pages/demo/module-a', '/workspace'),
 	'src_pages_demo_module_a_en'
